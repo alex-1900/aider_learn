@@ -272,6 +272,93 @@ if edit_format is None:
 
 ---
 
+## 3.1 edit_format 详解
+
+### edit_format 本质
+
+`edit_format` 是**类属性**（class attribute），不是方法。它有两个核心作用：
+
+1. **标识 Coder 类型** - 用于工厂方法匹配对应的 Coder 类
+2. **指导 LLM 输出格式** - Coder 类会根据 edit_format 选择相应的 system prompt
+
+```python
+class EditBlockCoder(Coder):
+    edit_format = "diff"  # 类属性
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+```
+
+### Slash 命令与 edit_format 的关系
+
+Slash 命令是 edit_format 的**消费者**，它们通过切换 edit_format 来改变 Coder 行为。
+
+**调用链**:
+```
+/ask → cmd_ask() → _generic_chat_command(args, "ask") → Coder.create(edit_format="ask")
+```
+
+**代码位置**: `commands.py:1182-1228`
+
+```python
+def cmd_ask(self, args):
+    "Ask a question about the codebase"
+    return self._generic_chat_command(args, "ask")
+
+def _generic_chat_command(self, args, edit_format):
+    # 创建指定 edit_format 的 Coder
+    coder = Coder.create(
+        edit_format=edit_format,
+        # ...
+    )
+```
+
+**常用 Slash 命令与 edit_format 对应表**:
+
+| 命令 | edit_format | 用途 |
+|------|-------------|------|
+| `/ask` | `"ask"` | 问答模式，不修改文件 |
+| `/architect` | `"architect"` | 架构设计模式 |
+| `/help` | `"help"` | 帮助模式 |
+| `/code` | `"diff"` (默认) | 代码编辑模式 |
+
+### edit_format_choices 与 coders.__all__ 的区别
+
+| 特性 | `edit_format_choices` | `coders.__all__` |
+|------|----------------------|------------------|
+| **位置** | `args.py` | `coders/__init__.py` |
+| **内容** | 字符串列表 `["diff", "whole", ...]` | 类列表 `[EditBlockCoder, ...]` |
+| **用途** | CLI 参数校验 | 工厂方法创建实例 |
+| **数据来源** | 从 `coders.__all__` 提取 | 手动维护的注册表 |
+
+**生成代码** (`args.py:46-54`):
+
+```python
+from aider import coders as _aider_coders
+
+edit_format_choices = sorted({
+    c.edit_format
+    for c in _aider_coders.__all__
+    if hasattr(c, "edit_format") and c.edit_format is not None
+})
+```
+
+**关系图**:
+
+```
+coders.__all__                    edit_format_choices
+     │                                   │
+     │  [EditBlockCoder,                 │  ["diff",
+     │   WholeFileCoder,   ──提取──>     │   "whole",
+     │   AskCoder,                       │   "ask",
+     │   ...]                            │   ...]
+     │                                   │
+     ▼                                   ▼
+Coder.create() 匹配             CLI --edit-format 校验
+```
+
+---
+
 ## 4. Coder 注册机制 (`aider/coders/__init__.py`)
 
 ### 注册方式
